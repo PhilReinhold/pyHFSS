@@ -5,6 +5,7 @@ import tempfile
 from sympy.parsing import sympy_parser
 from win32com.client import Dispatch
 
+
 class HfssClient(object):
     def __init__(self):
         self.app = Dispatch('AnsoftHfss.HfssScriptInterface')
@@ -33,8 +34,8 @@ class HfssClient(object):
             "TotalFields",
             ["NAME:SourceNames", "EigenMode"],
             ["NAME:Modes", n_modes],
-            ["NAME:Magnitudes"] + [ 1 if i+1 == n else 0 for i in range(n_modes)],
-            ["NAME:Phases"] + [ phase if i+1 == n else 0 for i in range(n_modes)],
+            ["NAME:Magnitudes"] + [1 if i + 1 == n else 0 for i in range(n_modes)],
+            ["NAME:Phases"] + [phase if i + 1 == n else 0 for i in range(n_modes)],
             ["NAME:Terminated"], ["NAME:Impedances"]
         )
 
@@ -77,37 +78,38 @@ class HfssClient(object):
         return ["NAME:Selections", "Selections:=", ",".join(names)]
 
     def draw_box_corner(self, pos, size, **kwargs):
-        return self.modeler.CreateBox([
-            "NAME:BoxParameters",
-            "XPosition:=", pos[0],
-            "YPosition:=", pos[1],
-            "ZPosition:=", pos[2],
-            "XSize:=", size[0],
-            "YSize:=", size[1],
-            "ZSize:=", size[2],
-            ], self._attributes_array(**kwargs))
+        return self.modeler.CreateBox(
+            ["NAME:BoxParameters",
+             "XPosition:=", pos[0],
+             "YPosition:=", pos[1],
+             "ZPosition:=", pos[2],
+             "XSize:=", size[0],
+             "YSize:=", size[1],
+             "ZSize:=", size[2]],
+            self._attributes_array(**kwargs)
+        )
 
     def draw_box_center(self, pos, size, **kwargs):
-        corner_pos = [simplify_arith_expr("(%s) - (%s)/2" % p) for p in zip(pos, size)]
+        corner_pos = [simplify_arith_expr("(%s) - (%s)/2"%p) for p in zip(pos, size)]
         return self.draw_box_corner(corner_pos, size, **kwargs)
 
     def draw_cylinder(self, pos, radius, height, axis, **kwargs):
-        assert(axis in "XYZ")
-        return self.modeler.CreateCylinder([
-            "NAME:CylinderParameters",
-            "XCenter:=", pos[0],
-            "YCenter:=", pos[1],
-            "ZCenter:=", pos[2],
-            "Radius:=", radius,
-            "Height:=", height,
-            "WhichAxis:=", axis,
-            "NumSides:=", 0
-        ], self._attributes_array(**kwargs))
+        assert (axis in "XYZ")
+        return self.modeler.CreateCylinder(
+            ["NAME:CylinderParameters",
+             "XCenter:=", pos[0],
+             "YCenter:=", pos[1],
+             "ZCenter:=", pos[2],
+             "Radius:=", radius,
+             "Height:=", height,
+             "WhichAxis:=", axis,
+             "NumSides:=", 0],
+            self._attributes_array(**kwargs))
 
     def draw_cylinder_center(self, pos, radius, height, axis, **kwargs):
         axis_idx = ["X", "Y", "Z"].index(axis)
         edge_pos = copy(pos)
-        edge_pos[axis_idx] = simplify_arith_expr("(%s) - (%s)/2" % (pos[axis_idx], height))
+        edge_pos[axis_idx] = simplify_arith_expr("(%s) - (%s)/2"%(pos[axis_idx], height))
         return self.draw_cylinder(edge_pos, radius, height, axis, **kwargs)
 
     def unite(self, names, keep_originals=False):
@@ -130,7 +132,7 @@ class HfssClient(object):
             ["NAME:TranslateParameters",
              "TranslateVectorX:=", vector[0],
              "TranslateVectorY:=", vector[1],
-             "TranslateVectorZ:=", vector[2] ]
+             "TranslateVectorZ:=", vector[2]]
         )
 
     def set_object_property(self, obj_name, prop_name, value):
@@ -149,19 +151,13 @@ class HfssClient(object):
 def simplify_arith_expr(expr):
     return repr(sympy_parser.parse_expr(str(expr)))
 
+
 client = HfssClient()
-
-class HfssObject(object):
-    def __init__(self, name):
-        self.name = name
-
-    def get_bounding_box(self):
-        return client.modeler.GetModel
-
 
 
 class CalcObject(object):
     client = client
+
     def __init__(self, stack):
         self.stack = stack
         self.calc_module = self.client.fields_calc
@@ -195,14 +191,14 @@ class CalcObject(object):
         return self._bin_op(other, "*")
 
     def __rmul__(self, other):
-        return self * other
+        return self*other
 
     def __div__(self, other):
         return self._bin_op(other, "/")
 
     def __rdiv__(self, other):
         other = ConstantCalcObject(other)
-        return other / self
+        return other/self
 
     def __pow__(self, other):
         return self._bin_op(other, "Pow")
@@ -254,7 +250,7 @@ class CalcObject(object):
         self.write_stack()
         self.client.set_mode(n_mode, 0)
         setup_name = self.client.default_setup_name
-        vars = ["Phase:=", str(int(phase))+"deg"]
+        vars = ["Phase:=", str(int(phase)) + "deg"]
         self.calc_module.ClcEval(setup_name, vars)
         return float(self.calc_module.GetTopEntryValue(setup_name, vars)[0])
 
@@ -263,6 +259,7 @@ class NamedCalcObject(CalcObject):
     def __init__(self, name):
         stack = [("CopyNamedExprToStack", name)]
         super(NamedCalcObject, self).__init__(stack)
+
 
 class ConstantCalcObject(CalcObject):
     def __init__(self, num):
