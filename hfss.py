@@ -368,6 +368,7 @@ class HfssSetup(HfssPropertyObject):
         :type setup: Dispatch
         """
         self.parent = self.prop_holder = design
+        self._setup_module = design._setup_module
         self.name = setup
         self.solution_name = setup + " : LastAdaptive"
         self.prop_server = "AnalysisSetup:" + setup
@@ -377,6 +378,33 @@ class HfssSetup(HfssPropertyObject):
 
     def analyze(self):
         self.parent._design.Analyze(self.name)
+
+    def insert_sweep(self, start_ghz, stop_ghz, count=None, step_ghz=None,
+                     name="Sweep", type="Fast", save_fields=False):
+        if (count is None) == (step_ghz is None):
+            raise ValueError("Exactly one of 'points' and 'delta' must be specified")
+        name = increment_name(name, self._setup_module.GetSweeps(self.name))
+        params = [
+            "NAME:"+name,
+            "IsEnabled:=", True,
+            "StartValue:=", "%fGHz" % start_ghz,
+            "StopValue:=", "%fGHz" % stop_ghz,
+            "Type:=", type,
+            "SaveFields:=", save_fields,
+            "ExtrapToDC:=", False,
+        ]
+        if step_ghz is not None:
+            params.extend([
+                "SetupType:=", "LinearSetup",
+                "StepSize:=", "%fGHz" % step_ghz,
+            ])
+        else:
+            params.extend([
+                "SetupType:=", "LinearCount",
+                "Count:=", count,
+            ])
+
+        self._setup_module.InsertFrequencySweep(self.name, params)
 
     def get_convergence(self, variation=""):
         fn = tempfile.mktemp()
@@ -469,7 +497,7 @@ class HfssModeler(object):
         self._modeler.SetModelUnits(["NAME:Units Parameter", "Units:=", units, "Rescale:=", rescale])
 
     def _attributes_array(self, name=None, nonmodel=False, color=None, transparency=0.9, material=None):
-        arr = ["NAME:Attributes"]
+        arr = ["NAME:Attributes", "PartCoordinateSystem:=", "Global"]
         if name is not None:
             arr.extend(["Name:=", name])
         if nonmodel:
