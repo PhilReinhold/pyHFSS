@@ -271,6 +271,15 @@ class HfssDesign(object):
     def duplicate(self):
         self.copy_to_project(self.parent)
 
+    def get_setup(self, name):
+        """
+        :rtype: HfssSetup
+        """
+        if self.solution_type == "Eigenmode":
+            return HfssEMSetup(self, name)
+        elif self.solution_type == "DrivenModal":
+            return HfssDMSetup(self, name)
+
     def create_dm_setup(self, freq_ghz=1, name=None, max_delta_e=0.1, max_passes=10,
                         min_passes=1, min_converged=1, pct_refinement=30,
                         basis_order=1):
@@ -292,7 +301,7 @@ class HfssDesign(object):
                 "IsEnabled:=", True,
                 "BasisOrder:=", basis_order
             ])
-        return HfssSetup(self, name)
+        return HfssDMSetup(self, name)
 
     def create_em_setup(self, min_freq_ghz=1, n_modes=1, max_delta_f=0.1, max_passes=10,
                         min_passes=1, min_converged=1, pct_refinement=30,
@@ -312,7 +321,7 @@ class HfssDesign(object):
                 "IsEnabled:=", True,
                 "BasisOrder:=", basis_order
             ])
-        return HfssSetup(self, name)
+        return HfssEMSetup(self, name)
 
     def get_nominal_variation(self):
         return self._design.GetNominalVariation()
@@ -369,6 +378,7 @@ class HfssSetup(HfssPropertyObject):
         """
         self.parent = self.prop_holder = design
         self._setup_module = design._setup_module
+        self._solutions = design._solutions
         self.name = setup
         self.solution_name = setup + " : LastAdaptive"
         self.prop_server = "AnalysisSetup:" + setup
@@ -405,6 +415,10 @@ class HfssSetup(HfssPropertyObject):
             ])
 
         self._setup_module.InsertFrequencySweep(self.name, params)
+        return HfssFrequencySweep(self, name)
+
+    def get_sweep(self, name):
+        return HfssFrequencySweep(self, name)
 
     def get_convergence(self, variation=""):
         fn = tempfile.mktemp()
@@ -421,9 +435,6 @@ class HfssSetup(HfssPropertyObject):
         self.parent._design.ExportProfile(self.name, variation, fn, False)
         return numpy.loadtxt(fn)
 
-    def get_solutions(self):
-        return HfssDesignSolutions(self, self.parent._solutions)
-
 
 class HfssDMSetup(HfssSetup):
     def __init__(self, design, setup):
@@ -431,12 +442,18 @@ class HfssDMSetup(HfssSetup):
         self.solution_freq = self.make_prop("Solution Freq")
         self.delta_e = self.make_prop("Delta Energy")
 
+    def get_solutions(self):
+        return HfssDMDesignSolutions(self, self.parent._solutions)
+
 class HfssEMSetup(HfssSetup):
     def __init__(self, design, setup):
         super(HfssEMSetup, self).__init__(design, setup)
         self.min_freq = self.make_prop("Min Freq")
         self.n_modes = self.make_prop("Modes")
         self.delta_f = self.make_prop("Delta F")
+
+    def get_solutions(self):
+        return HfssEMDesignSolutions(self, self.parent._solutions)
 
 class HfssDesignSolutions(object):
     def __init__(self, setup, solutions):
@@ -461,24 +478,48 @@ class HfssEMDesignSolutions(HfssDesignSolutions):
         )
 
 class HfssDMDesignSolutions(HfssDesignSolutions):
+    pass
+
+class HfssFrequencySweep(object):
+    def __init__(self, setup, name):
+        self.parent = setup
+        self.name = name
+
     def get_network_data(self, formats):
         if isinstance(formats, str):
             formats = formats.split(",")
+        formats = [f.upper() for f in formats]
 
         fmts_lists = {'S': [], 'Y': [], 'Z': []}
 
         for f in formats:
-            f = f.upper()
             fmts_lists[f[0]].append((int(f[1]), int(f[2])))
+
+        ret = [None] * len(formats)
+        freq = None
 
         for data_type, list in fmts_lists.items():
             if list:
                 fn = tempfile.mktemp()
-                self._solutions.ExportNetworkData(
-                    [],  self.parent,
+                self.parent._solutions.ExportNetworkData(
+                    [],  self.parent.name + " : " + self.name,
                       2, fn, ["all"], False, 0,
-                      data_type, "", "1"
+                      data_type, -1, 1
                 )
+                with open(fn) as f:
+                    f.readline()
+                    colnames = f.readline().split()
+                array = numpy.loadtxt(fn, skiprows=2)
+                if freq is None:
+                    freq = array[:, 0]
+                for i, j in list:
+                    real_idx = colnames.index("%s[%d,%d]_Real" % (data_type, i, j))
+                    imag_idx = colnames.index("%s[%d,%d]_Imag" % (data_type, i, j))
+                    c_arr = array[:, real_idx] + 1j*array[:, imag_idx]
+                    ret[formats.index("%s%d%d" % (data_type, i, j))] = c_arr
+
+        return freq, ret
+
 
 class HfssModeler(object):
     def __init__(self, design, modeler, boundaries):
