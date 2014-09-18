@@ -34,4 +34,4 @@ cav = modeler.unite([cav1, cav2, tunnel])
 
 chip = modeler.draw_box_corner([-tx/2, -ty/2, -tz/2], [tx, ty, cz], name='Chip', material='sapphire')
 
-cav1.transparency = 0.9
+cav1.transparency = 1.0

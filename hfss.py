@@ -75,7 +75,12 @@ def make_prop(name, prop_tab=None, prop_server=None):
             prop_tab = prop_tab(self)
         if isinstance(prop_server, types.FunctionType):
             prop_server = prop_server(self)
-        self.prop_holder.SetPropertyValue(prop_tab, prop_server, name, value)
+        self.prop_holder.ChangeProperty(
+            ["NAME:AllTabs",
+             ["NAME:"+prop_tab,
+              ["NAME:PropServers", prop_server],
+              ["NAME:ChangedProps",
+               ["NAME:"+name, "Value:=", value]]]])
 
     def get_prop(self, prop_tab=prop_tab, prop_server=prop_server):
         prop_tab = self.prop_tab if prop_tab is None else prop_tab
@@ -715,8 +720,15 @@ class Box(ModelEntity):
     y_size = make_prop("YSize")
     z_size = make_prop("ZSize")
     def __init__(self, name, modeler, corner, size):
+        """
+        :type name: str
+        :type modeler: HfssModeler
+        :type corner: [(VariableString, VariableString, VariableString)]
+        :param size: [(VariableString, VariableString, VariableString)]
+        """
         super(Box, self).__init__(name, modeler)
-        self.modeler = self.prop_holder = modeler
+        self.modeler = modeler
+        self.prop_holder = modeler._modeler
         self.corner = corner
         self.size = size
         self.center = [c + s/2 for c, s in zip(corner, size)]
