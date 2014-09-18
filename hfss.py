@@ -3,6 +3,7 @@ import atexit
 from copy import copy
 
 import tempfile
+import types
 import numpy
 from sympy.parsing import sympy_parser
 from pint import UnitRegistry
@@ -65,16 +66,27 @@ class HfssPropertyObject(object):
     prop_holder = None
     prop_tab = None
     prop_server = None
-    def make_prop(self, name, prop_tab=None, prop_server=None):
+
+def make_prop(name, prop_tab=None, prop_server=None):
+    def set_prop(self, value, prop_tab=prop_tab, prop_server=prop_server):
         prop_tab = self.prop_tab if prop_tab is None else prop_tab
         prop_server = self.prop_server if prop_server is None else prop_server
-        def set_prop(value):
-            self.prop_holder.SetPropertyValue(prop_tab, prop_server, name, value)
+        if isinstance(prop_tab, types.FunctionType):
+            prop_tab = prop_tab(self)
+        if isinstance(prop_server, types.FunctionType):
+            prop_server = prop_server(self)
+        self.prop_holder.SetPropertyValue(prop_tab, prop_server, name, value)
 
-        def get_prop():
-            return self.prop_holder.GetPropertyValue(prop_tab, prop_server, name)
+    def get_prop(self, prop_tab=prop_tab, prop_server=prop_server):
+        prop_tab = self.prop_tab if prop_tab is None else prop_tab
+        prop_server = self.prop_server if prop_server is None else prop_server
+        if isinstance(prop_tab, types.FunctionType):
+            prop_tab = prop_tab(self)
+        if isinstance(prop_server, types.FunctionType):
+            prop_server = prop_server(self)
+        return self.prop_holder.GetPropertyValue(prop_tab, prop_server, name)
 
-        return property(get_prop, set_prop)
+    return property(get_prop, set_prop)
 
 
 class HfssApp(object):
@@ -370,21 +382,22 @@ class HfssDesign(object):
 
 class HfssSetup(HfssPropertyObject):
     prop_tab = "HfssTab"
+    passes = make_prop("Passes")
+    pct_refinement = make_prop("Percent Refinement")
+    basis_order = make_prop("Basis Order")
 
     def __init__(self, design, setup):
         """
         :type design: HfssDesign
         :type setup: Dispatch
         """
-        self.parent = self.prop_holder = design
+        self.parent = design
+        self.prop_holder = design._design
         self._setup_module = design._setup_module
         self._solutions = design._solutions
         self.name = setup
         self.solution_name = setup + " : LastAdaptive"
         self.prop_server = "AnalysisSetup:" + setup
-        self.passes = self.make_prop("Passes")
-        self.pct_refinement = self.make_prop("Percent Refinement")
-        self.basis_order = self.make_prop("Basis Order")
 
     def analyze(self):
         self.parent._design.Analyze(self.name)
@@ -435,22 +448,21 @@ class HfssSetup(HfssPropertyObject):
         self.parent._design.ExportProfile(self.name, variation, fn, False)
         return numpy.loadtxt(fn)
 
+    def get_fields(self):
+        return HfssFieldsCalc(self)
+
 
 class HfssDMSetup(HfssSetup):
-    def __init__(self, design, setup):
-        super(HfssDMSetup, self).__init__(design, setup)
-        self.solution_freq = self.make_prop("Solution Freq")
-        self.delta_e = self.make_prop("Delta Energy")
+    solution_freq = make_prop("Solution Freq")
+    delta_e = make_prop("Delta Energy")
 
     def get_solutions(self):
         return HfssDMDesignSolutions(self, self.parent._solutions)
 
 class HfssEMSetup(HfssSetup):
-    def __init__(self, design, setup):
-        super(HfssEMSetup, self).__init__(design, setup)
-        self.min_freq = self.make_prop("Min Freq")
-        self.n_modes = self.make_prop("Modes")
-        self.delta_f = self.make_prop("Delta F")
+    min_freq = make_prop("Min Freq")
+    n_modes = make_prop("Modes")
+    delta_f = make_prop("Delta F")
 
     def get_solutions(self):
         return HfssEMDesignSolutions(self, self.parent._solutions)
@@ -679,6 +691,10 @@ class HfssModeler(object):
 class ModelEntity(str, HfssPropertyObject):
     prop_tab = "Geometry3DCmdTab"
     model_command = None
+    transparency = make_prop("Transparent", prop_tab="Geometry3DAttributeTab", prop_server=lambda self: self)
+    material = make_prop("Material", prop_tab="Geometry3DAttributeTab", prop_server=lambda self: self)
+    coordinate_system = make_prop("Coordinate System")
+
     def __new__(self, val, *args, **kwargs):
         return str.__new__(self, val)
 
@@ -690,20 +706,17 @@ class ModelEntity(str, HfssPropertyObject):
         super(ModelEntity, self).__init__(val)
         self.modeler = modeler
         self.prop_server = self + ":" + self.model_command + ":1"
-        self.transparency = self.make_prop("Transparent", prop_tab="Geometry3DAttributeTab", prop_server=self)
-        self.material = self.make_prop("Material", prop_tab="Geometry3DAttributeTab", prop_server=self)
-        self.coordinate_system = self.make_prop("Coordinate System")
 
 
 class Box(ModelEntity):
     model_command = "CreateBox"
+    position = make_prop("Position")
+    x_size = make_prop("XSize")
+    y_size = make_prop("YSize")
+    z_size = make_prop("ZSize")
     def __init__(self, name, modeler, corner, size):
         super(Box, self).__init__(name, modeler)
         self.modeler = self.prop_holder = modeler
-        self.position = self.make_prop("Position")
-        self.x_size = self.make_prop("XSize")
-        self.y_size = self.make_prop("YSize")
-        self.z_size = self.make_prop("ZSize")
         self.corner = corner
         self.size = size
         self.center = [c + s/2 for c, s in zip(corner, size)]
@@ -740,38 +753,47 @@ class Rect(ModelEntity):
 
 
 class HfssFieldsCalc(object):
-    def __init__(self):
-        self.Mag_E = NamedCalcObject("Mag_E", self)
-        self.Mag_H = NamedCalcObject("Mag_H", self)
-        self.Mag_Jsurf = NamedCalcObject("Mag_Jsurf", self)
-        self.Mag_Jvol = NamedCalcObject("Mag_Jvol", self)
-        self.Vector_E = NamedCalcObject("Vector_E", self)
-        self.Vector_H = NamedCalcObject("Vector_H", self)
-        self.Vector_Jsurf = NamedCalcObject("Vector_Jsurf", self)
-        self.Vector_Jvol = NamedCalcObject("Vector_Jvol", self)
-        self.ComplexMag_E = NamedCalcObject("ComplexMag_E", self)
-        self.ComplexMag_H = NamedCalcObject("ComplexMag_H", self)
-        self.ComplexMag_Jsurf = NamedCalcObject("ComplexMag_Jsurf", self)
-        self.ComplexMag_Jvol = NamedCalcObject("ComplexMag_Jvol", self)
+    def __init__(self, setup):
+        """
+        :type setup: HfssSetup
+        """
+        self.parent = setup
+        self.Mag_E = NamedCalcObject("Mag_E", setup)
+        self.Mag_H = NamedCalcObject("Mag_H", setup)
+        self.Mag_Jsurf = NamedCalcObject("Mag_Jsurf", setup)
+        self.Mag_Jvol = NamedCalcObject("Mag_Jvol", setup)
+        self.Vector_E = NamedCalcObject("Vector_E", setup)
+        self.Vector_H = NamedCalcObject("Vector_H", setup)
+        self.Vector_Jsurf = NamedCalcObject("Vector_Jsurf", setup)
+        self.Vector_Jvol = NamedCalcObject("Vector_Jvol", setup)
+        self.ComplexMag_E = NamedCalcObject("ComplexMag_E", setup)
+        self.ComplexMag_H = NamedCalcObject("ComplexMag_H", setup)
+        self.ComplexMag_Jsurf = NamedCalcObject("ComplexMag_Jsurf", setup)
+        self.ComplexMag_Jvol = NamedCalcObject("ComplexMag_Jvol", setup)
 
 
 class CalcObject(object):
-    def __init__(self, stack, calc_module):
+    def __init__(self, stack, setup):
+        """
+        :type stack: [(str, str)]
+        :type setup: HfssSetup
+        """
         self.stack = stack
-        self.calc_module = calc_module
+        self.setup = setup
+        self.calc_module = setup.parent._fields_calc
 
     def _bin_op(self, other, op):
         if isinstance(other, (int, float)):
-            other = ConstantCalcObject(other, self.calc_module)
+            other = ConstantCalcObject(other, self.setup)
 
         stack = self.stack + other.stack
         stack.append(("CalcOp", op))
-        return CalcObject(stack, self.calc_module)
+        return CalcObject(stack, self.setup)
 
     def _unary_op(self, op):
         stack = self.stack[:]
         stack.append(("CalcOp", op))
-        return CalcObject(stack, self.calc_module)
+        return CalcObject(stack, self.setup)
 
     def __add__(self, other):
         return self._bin_op(other, "+")
@@ -795,7 +817,7 @@ class CalcObject(object):
         return self._bin_op(other, "/")
 
     def __rdiv__(self, other):
-        other = ConstantCalcObject(other, self.calc_module)
+        other = ConstantCalcObject(other, self.setup)
         return other/self
 
     def __pow__(self, other):
@@ -824,7 +846,7 @@ class CalcObject(object):
 
     def _integrate(self, name, type):
         stack = self.stack + [(type, name), ("CalcOp", "Integrate")]
-        return CalcObject(stack, self.calc_module)
+        return CalcObject(stack, self.setup)
 
     def integrate_line(self, name):
         return self._integrate(name, "EnterLine")
@@ -842,27 +864,33 @@ class CalcObject(object):
     def save_as(self, name):
         self.write_stack()
         self.calc_module.AddNamedExpr(name)
-        return NamedCalcObject(name, self.calc_module)
+        return NamedCalcObject(name, self.setup)
 
-    def evaluate(self, n_mode=1, phase=0):
+    def evaluate(self, phase=0):#, n_mode=1):
         self.write_stack()
-        self.calc_module.set_mode(n_mode, 0)
-        setup_name = self.calc_module.default_setup_name
-        vars = ["Phase:=", str(int(phase)) + "deg"]
-        self.calc_module.ClcEval(setup_name, vars)
-        return float(self.calc_module.GetTopEntryValue(setup_name, vars)[0])
+        #self.calc_module.set_mode(n_mode, 0)
+        setup_name = self.setup.solution_name
+        args = [
+            "Phase:=", str(int(phase)) + "deg",
+        ]
+
+        if isinstance(self.setup, HfssDMSetup):
+            args.extend(["Freq:=", self.setup.solution_freq])
+
+        self.calc_module.ClcEval(setup_name, args)
+        return float(self.calc_module.GetTopEntryValue(setup_name, args)[0])
 
 
 class NamedCalcObject(CalcObject):
-    def __init__(self, name, calc_module):
+    def __init__(self, name, setup):
         stack = [("CopyNamedExprToStack", name)]
-        super(NamedCalcObject, self).__init__(stack, calc_module)
+        super(NamedCalcObject, self).__init__(stack, setup)
 
 
 class ConstantCalcObject(CalcObject):
-    def __init__(self, num, calc_module):
+    def __init__(self, num, setup):
         stack = [("EnterScalar", num)]
-        super(ConstantCalcObject, self).__init__(stack, calc_module)
+        super(ConstantCalcObject, self).__init__(stack, setup)
 
 def get_active_project():
     app = HfssApp()
