@@ -288,10 +288,21 @@ class HfssDesign(object):
     def duplicate(self):
         self.copy_to_project(self.parent)
 
-    def get_setup(self, name):
+    def get_setup_names(self):
+        return self._setup_module.GetSetups()
+
+    def get_setup(self, name=None):
         """
         :rtype: HfssSetup
         """
+        setups = self.get_setup_names()
+        if not setups:
+            raise EnvironmentError("No Setups Present")
+        if name is None:
+            name = setups[0]
+        elif name not in setups:
+            raise EnvironmentError("Setup {} not found: {}".format(name, setups))
+
         if self.solution_type == "Eigenmode":
             return HfssEMSetup(self, name)
         elif self.solution_type == "DrivenModal":
@@ -304,7 +315,7 @@ class HfssDesign(object):
         if name is None:
             name = "Setup"
 
-        name = increment_name(name, self._setup_module.GetSetups())
+        name = increment_name(name, self.get_setup_names())
 
         self._setup_module.InsertSetup(
             "HfssDriven", [
@@ -323,7 +334,7 @@ class HfssDesign(object):
     def create_em_setup(self, min_freq_ghz=1, n_modes=1, max_delta_f=0.1, max_passes=10,
                         min_passes=1, min_converged=1, pct_refinement=30,
                         basis_order=1):
-        name = increment_name("Setup", self._setup_module.GetSetups())
+        name = increment_name("Setup", self.get_setup_names())
         self._setup_module.InsertSetup(
             "HfssEigen", [
                 "NAME:"+name,
@@ -411,7 +422,7 @@ class HfssSetup(HfssPropertyObject):
                      name="Sweep", type="Fast", save_fields=False):
         if (count is None) == (step_ghz is None):
             raise ValueError("Exactly one of 'points' and 'delta' must be specified")
-        name = increment_name(name, self._setup_module.GetSweeps(self.name))
+        name = increment_name(name, self.get_sweep_names())
         params = [
             "NAME:"+name,
             "IsEnabled:=", True,
@@ -435,7 +446,17 @@ class HfssSetup(HfssPropertyObject):
         self._setup_module.InsertFrequencySweep(self.name, params)
         return HfssFrequencySweep(self, name)
 
-    def get_sweep(self, name):
+    def get_sweep_names(self):
+        return self._setup_module.GetSweeps(self.name)
+
+    def get_sweep(self, name=None):
+        sweeps = self.get_sweep_names()
+        if not sweeps:
+            raise EnvironmentError("No Sweeps Present")
+        if name is None:
+            name = sweeps[0]
+        elif name not in sweeps:
+            raise EnvironmentError("Sweep {} not found in {}".format(name, sweeps))
         return HfssFrequencySweep(self, name)
 
     def get_convergence(self, variation=""):
