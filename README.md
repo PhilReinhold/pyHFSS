@@ -6,9 +6,11 @@ HFSS scripting interface in python
 Create a Design
 ---------------
     
+    ```python
     from hfss import get_active_project
     proj = get_active_project()
     design = proj.insert_dm_design("Test")
+    ```
     
 Or Get an Existing Design
 -------------------------

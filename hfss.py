@@ -495,14 +495,17 @@ class HfssEMSetup(HfssSetup):
 
 class HfssDesignSolutions(object):
     def __init__(self, setup, solutions):
+        '''
+        :type setup: HfssSetup
+        '''
         self.parent = setup
         self._solutions = solutions
 
 class HfssEMDesignSolutions(HfssDesignSolutions):
     def eigenmodes(self):
         fn = tempfile.mktemp()
-        self._solutions.ExportEigenmodes(self.parent.name, "", fn)
-        return numpy.loadtxt(fn)
+        self._solutions.ExportEigenmodes(self.parent.solution_name, "", fn)
+        return numpy.loadtxt(fn, usecols=[1])
 
     def set_mode(self, n, phase):
         n_modes = self.parent.n_modes
@@ -916,6 +919,7 @@ class CalcObject(object):
 
 class NamedCalcObject(CalcObject):
     def __init__(self, name, setup):
+        self.name = name
         stack = [("CopyNamedExprToStack", name)]
         super(NamedCalcObject, self).__init__(stack, setup)
 
