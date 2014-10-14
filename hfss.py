@@ -67,7 +67,16 @@ class HfssPropertyObject(object):
     prop_tab = None
     prop_server = None
 
-def make_prop(name, prop_tab=None, prop_server=None):
+def make_str_prop(name, prop_tab=None, prop_server=None):
+    return make_prop(name, prop_tab=prop_tab, prop_server=prop_server)
+
+def make_int_prop(name, prop_tab=None, prop_server=None):
+    return make_prop(name, prop_tab=prop_tab, prop_server=prop_server, prop_args=["MustBeInt:=", True])
+
+def make_float_prop(name, prop_tab=None, prop_server=None):
+    return make_prop(name, prop_tab=prop_tab, prop_server=prop_server, prop_args=["MustBeInt:=", False])
+
+def make_prop(name, prop_tab=None, prop_server=None, prop_args=None):
     def set_prop(self, value, prop_tab=prop_tab, prop_server=prop_server):
         prop_tab = self.prop_tab if prop_tab is None else prop_tab
         prop_server = self.prop_server if prop_server is None else prop_server
@@ -80,7 +89,7 @@ def make_prop(name, prop_tab=None, prop_server=None):
              ["NAME:"+prop_tab,
               ["NAME:PropServers", prop_server],
               ["NAME:ChangedProps",
-               ["NAME:"+name, "Value:=", value]]]])
+               ["NAME:"+name, "Value:=", value] + prop_args]]])
 
     def get_prop(self, prop_tab=prop_tab, prop_server=prop_server):
         prop_tab = self.prop_tab if prop_tab is None else prop_tab
@@ -398,9 +407,9 @@ class HfssDesign(object):
 
 class HfssSetup(HfssPropertyObject):
     prop_tab = "HfssTab"
-    passes = make_prop("Passes")
-    pct_refinement = make_prop("Percent Refinement")
-    basis_order = make_prop("Basis Order")
+    passes = make_int_prop("Passes")
+    pct_refinement = make_float_prop("Percent Refinement")
+    basis_order = make_str_prop("Basis Order")
 
     def __init__(self, design, setup):
         """
@@ -479,16 +488,16 @@ class HfssSetup(HfssPropertyObject):
 
 
 class HfssDMSetup(HfssSetup):
-    solution_freq = make_prop("Solution Freq")
-    delta_e = make_prop("Delta Energy")
+    solution_freq = make_float_prop("Solution Freq")
+    delta_s = make_float_prop("Delta S")
 
     def get_solutions(self):
         return HfssDMDesignSolutions(self, self.parent._solutions)
 
 class HfssEMSetup(HfssSetup):
-    min_freq = make_prop("Min Freq")
-    n_modes = make_prop("Modes")
-    delta_f = make_prop("Delta F")
+    min_freq = make_float_prop("Min Freq")
+    n_modes = make_int_prop("Modes")
+    delta_f = make_float_prop("Delta F")
 
     def get_solutions(self):
         return HfssEMDesignSolutions(self, self.parent._solutions)
@@ -720,9 +729,9 @@ class HfssModeler(object):
 class ModelEntity(str, HfssPropertyObject):
     prop_tab = "Geometry3DCmdTab"
     model_command = None
-    transparency = make_prop("Transparent", prop_tab="Geometry3DAttributeTab", prop_server=lambda self: self)
-    material = make_prop("Material", prop_tab="Geometry3DAttributeTab", prop_server=lambda self: self)
-    coordinate_system = make_prop("Coordinate System")
+    transparency = make_float_prop("Transparent", prop_tab="Geometry3DAttributeTab", prop_server=lambda self: self)
+    material = make_str_prop("Material", prop_tab="Geometry3DAttributeTab", prop_server=lambda self: self)
+    coordinate_system = make_str_prop("Coordinate System")
 
     def __new__(self, val, *args, **kwargs):
         return str.__new__(self, val)
@@ -739,10 +748,10 @@ class ModelEntity(str, HfssPropertyObject):
 
 class Box(ModelEntity):
     model_command = "CreateBox"
-    position = make_prop("Position")
-    x_size = make_prop("XSize")
-    y_size = make_prop("YSize")
-    z_size = make_prop("ZSize")
+    position = make_float_prop("Position")
+    x_size = make_float_prop("XSize")
+    y_size = make_float_prop("YSize")
+    z_size = make_float_prop("ZSize")
     def __init__(self, name, modeler, corner, size):
         """
         :type name: str
@@ -806,6 +815,9 @@ class HfssFieldsCalc(object):
         self.ComplexMag_H = NamedCalcObject("ComplexMag_H", setup)
         self.ComplexMag_Jsurf = NamedCalcObject("ComplexMag_Jsurf", setup)
         self.ComplexMag_Jvol = NamedCalcObject("ComplexMag_Jvol", setup)
+
+    def clear_named_expressions(self):
+        self.parent.parent._fields_calc.ClearAllNamedExpr()
 
 
 class CalcObject(object):
@@ -898,6 +910,8 @@ class CalcObject(object):
             getattr(self.calc_module, fn)(arg)
 
     def save_as(self, name):
+        """if the object already exists, try clearing your
+        named expressions first with fields.clear_named_expressions"""
         self.write_stack()
         self.calc_module.AddNamedExpr(name)
         return NamedCalcObject(name, self.setup)
