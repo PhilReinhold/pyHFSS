@@ -490,6 +490,37 @@ class HfssSetup(HfssPropertyObject):
 class HfssDMSetup(HfssSetup):
     solution_freq = make_float_prop("Solution Freq")
     delta_s = make_float_prop("Delta S")
+    solver_type = make_str_prop("Solver Type")
+
+    def setup_link(self, linked_setup):
+        '''
+            type: linked_setup <HfssSetup>
+        '''
+        args = ["NAME:" + self.name,
+                ["NAME:MeshLink",
+                "Project:=", "This Project*",
+                "Design:=", linked_setup.parent.name,
+                "Soln:=", linked_setup.solution_name,
+                self._map_variables_by_name(),
+                "ForceSourceToSolve:=", True,
+                "PathRelativeTo:=", "TargetProject",                
+                ],
+                ]
+        self._setup_module.EditSetup(self.name, args)
+
+    def _map_variables_by_name(self):
+        ''' does not check that variables are all present '''
+        # don't care about values
+        project_variables = self.parent.parent.get_variables()
+        design_variables = self.parent.get_variables().keys()
+    
+        # build array
+        args = ["NAME:Params",]
+        for name in project_variables:
+            args.extend([str(name)+":=", str(name)])
+        for name in design_variables:
+            args.extend([str(name)+":=", str(name)])
+        return args
 
     def get_solutions(self):
         return HfssDMDesignSolutions(self, self.parent._solutions)
