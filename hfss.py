@@ -1,6 +1,7 @@
 from __future__ import division
 import atexit
 from copy import copy
+import os
 
 import tempfile
 import types
@@ -735,6 +736,31 @@ class HfssFrequencySweep(object):
             name, "Modal Solution Data", "Rectangular Plot",
             self.solution_name, ["Domain:=", "Sweep"], ["Freq:=", ["All"]] + var_args,
             ["X Component:=", "Freq", "Y Component:=", [expr]], [])
+        return HfssReport(self.parent.parent, name)
+
+    def get_report_arrays(self, expr):
+        r = self.create_report("Temp", expr)
+        return r.get_arrays()
+
+
+class HfssReport(object):
+    def __init__(self, design, name):
+        """
+        :type design: HfssDesign
+        :type name: str
+        """
+        self.parent_design = design
+        self.name = name
+
+    def export_to_file(self, filename):
+        filepath = os.path.abspath(filename)
+        self.parent_design._reporter.ExportToFile(self.name, filepath)
+
+    def get_arrays(self):
+        fn = tempfile.mktemp(suffix=".csv")
+        self.export_to_file(fn)
+        return numpy.loadtxt(fn, skiprows=1, delimiter=',').transpose()
+
 
 class HfssModeler(object):
     def __init__(self, design, modeler, boundaries):
