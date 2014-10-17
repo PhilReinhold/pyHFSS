@@ -302,6 +302,7 @@ class HfssDesign(object):
         self._fields_calc = design.GetModule("FieldsReporter")
         self._output = design.GetModule("OutputVariable")
         self._boundaries = design.GetModule("BoundarySetup")
+        self._reporter = design.GetModule("ReportSetup")
         self._modeler = design.SetActiveEditor("3D Modeler")
         self.modeler = HfssModeler(self, self._modeler, self._boundaries)
 
@@ -439,6 +440,9 @@ class HfssDesign(object):
         for name, value in source_variables.iteritems():
             self.set_variable(name, value)
 
+    def get_excitations(self):
+        self._boundaries.GetExcitations()
+
     def _evaluate_variable_expression(self, expr, units):
         """
         :type expr: str
@@ -470,6 +474,7 @@ class HfssSetup(HfssPropertyObject):
         self.parent = design
         self.prop_holder = design._design
         self._setup_module = design._setup_module
+        self._reporter = design._reporter
         self._solutions = design._solutions
         self.name = setup
         self.solution_name = setup + " : LastAdaptive"
@@ -720,6 +725,16 @@ class HfssFrequencySweep(object):
                     ret[formats.index("%s%d%d" % (data_type, i, j))] = c_arr
 
         return freq, ret
+
+    def create_report(self, name, expr):
+        existing = self.parent._reporter.GetAllReportNames()
+        name = increment_name(name, existing)
+        var_names = self.parent.parent.get_variable_names()
+        var_args = sum([["%s:=" % v_name, ["Nominal"]] for v_name in var_names], [])
+        self.parent._reporter.CreateReport(
+            name, "Modal Solution Data", "Rectangular Plot",
+            self.solution_name, ["Domain:=", "Sweep"], ["Freq:=", ["All"]] + var_args,
+            ["X Component:=", "Freq", "Y Component:=", [expr]], [])
 
 class HfssModeler(object):
     def __init__(self, design, modeler, boundaries):
