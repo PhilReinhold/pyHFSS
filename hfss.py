@@ -12,6 +12,11 @@ from win32com.client import Dispatch
 ureg = UnitRegistry()
 Q = ureg.Quantity
 
+BASIS_ORDER = {"Zero Order": 0,
+               "First Order": 1,
+               "Second Order": 2,
+               "Mixed Order": -1}
+
 def simplify_arith_expr(expr):
     try:
         out = repr(sympy_parser.parse_expr(str(expr)))
@@ -21,11 +26,21 @@ def simplify_arith_expr(expr):
         raise
 
 def increment_name(base, existing):
+    if not base in existing:
+        return base
     n = 1
     make_name = lambda: base + str(n)
     while make_name() in existing:
         n += 1
     return make_name()
+    
+def extract_value_unit(expr, units):
+    """
+    :type expr: str
+    :type units: str
+    :return: float
+    """
+    return Q(expr).to(units).magnitude
 
 class VariableString(str):
     def __add__(self, other):
@@ -84,12 +99,20 @@ def make_prop(name, prop_tab=None, prop_server=None, prop_args=None):
             prop_tab = prop_tab(self)
         if isinstance(prop_server, types.FunctionType):
             prop_server = prop_server(self)
-        self.prop_holder.ChangeProperty(
-            ["NAME:AllTabs",
-             ["NAME:"+prop_tab,
-              ["NAME:PropServers", prop_server],
-              ["NAME:ChangedProps",
-               ["NAME:"+name, "Value:=", value] + prop_args]]])
+        if prop_args is None:
+            self.prop_holder.ChangeProperty(
+                ["NAME:AllTabs",
+                 ["NAME:"+prop_tab,
+                  ["NAME:PropServers", prop_server],
+                    ["NAME:ChangedProps",
+                     ["NAME:"+name, "Value:=", value]]]])
+        else:
+            self.prop_holder.ChangeProperty(
+                ["NAME:AllTabs",
+                 ["NAME:"+prop_tab,
+                  ["NAME:PropServers", prop_server],
+                  ["NAME:ChangedProps",
+                   ["NAME:"+name, "Value:=", value] + prop_args]]])
 
     def get_prop(self, prop_tab=prop_tab, prop_server=prop_server):
         prop_tab = self.prop_tab if prop_tab is None else prop_tab
@@ -101,7 +124,6 @@ def make_prop(name, prop_tab=None, prop_server=None, prop_args=None):
         return self.prop_holder.GetPropertyValue(prop_tab, prop_server, name)
 
     return property(get_prop, set_prop)
-
 
 class HfssApp(object):
     def __init__(self):
@@ -212,9 +234,22 @@ class HfssProject(object):
 
     def import_dataset(self, path):
         self._project.ImportDataset(path)
+        
+    def rename_design(self, design, rename):
+        if design in self.get_designs():
+            design.rename_design(design.name, rename)
+        else:
+            raise ValueError('%s design does not exist' % design.name)
 
-    def get_variables(self):
+    def duplicate_design(self, target, source):
+        src_design = self.get_design(source)
+        return src_design.duplicate(name=target)
+
+    def get_variable_names(self):
         return [VariableString(s) for s in self._project.GetVariables()]
+    
+    def get_variables(self):
+        return {VariableString(s): self.get_variable_value(s) for s in self._project.GetVariables()}
 
     def get_variable_value(self, name):
         return self._project.GetVariableValue(name)
@@ -288,14 +323,22 @@ class HfssDesign(object):
         self._output = None
         self._boundaries = None
         self._modeler = None
-
+    
+    def rename_design(self, name):
+        old_name = self._design.GetName()
+        self._design.RenameDesignInstance(old_name, name)
+		
     def copy_to_project(self, project):
-        self.parent.CopyDesign(self.name)
         project.make_active()
+        project._project.CopyDesign(self.name)
         project._project.Paste()
+        return project.get_active_design()
 
-    def duplicate(self):
-        self.copy_to_project(self.parent)
+    def duplicate(self, name=None):
+        dup = self.copy_to_project(self.parent)
+        if name is not None:
+            dup.rename_design(name)
+        return dup 
 
     def get_setup_names(self):
         return self._setup_module.GetSetups()
@@ -317,20 +360,16 @@ class HfssDesign(object):
         elif self.solution_type == "DrivenModal":
             return HfssDMSetup(self, name)
 
-    def create_dm_setup(self, freq_ghz=1, name=None, max_delta_e=0.1, max_passes=10,
+    def create_dm_setup(self, freq_ghz=1, name="Setup", max_delta_s=0.1, max_passes=10,
                         min_passes=1, min_converged=1, pct_refinement=30,
-                        basis_order=1):
-
-        if name is None:
-            name = "Setup"
-
+                        basis_order=-1):
+                            
         name = increment_name(name, self.get_setup_names())
-
         self._setup_module.InsertSetup(
             "HfssDriven", [
                 "NAME:"+name,
                 "Frequency:=", str(freq_ghz)+"GHz",
-                "MaxDeltaE:=", max_delta_e,
+                "MaxDeltaS:=", max_delta_s,
                 "MaximumPasses:=", max_passes,
                 "MinimumPasses:=", min_passes,
                 "MinimumConvergedPasses:=", min_converged,
@@ -340,10 +379,11 @@ class HfssDesign(object):
             ])
         return HfssDMSetup(self, name)
 
-    def create_em_setup(self, min_freq_ghz=1, n_modes=1, max_delta_f=0.1, max_passes=10,
+    def create_em_setup(self, name="Setup", min_freq_ghz=1, n_modes=1, max_delta_f=0.1, max_passes=10,
                         min_passes=1, min_converged=1, pct_refinement=30,
-                        basis_order=1):
-        name = increment_name("Setup", self.get_setup_names())
+                        basis_order=-1):
+                            
+        name = increment_name(name, self.get_setup_names())
         self._setup_module.InsertSetup(
             "HfssEigen", [
                 "NAME:"+name,
@@ -359,6 +399,10 @@ class HfssDesign(object):
                 "BasisOrder:=", basis_order
             ])
         return HfssEMSetup(self, name)
+    
+    def delete_setup(self, name):
+        if name in self.get_setup_names():
+            self._setup_module.DeleteSetups(name)      
 
     def get_nominal_variation(self):
         return self._design.GetNominalVariation()
@@ -375,16 +419,31 @@ class HfssDesign(object):
                 "Value:=", value]]]])
 
     def set_variable(self, name, value):
+        # TODO: check if variable does not exist and quit if it doesn't?
         if name not in self._design.GetVariables():
             self.create_variable(name, value)
         else:
             self._design.SetVariableValue(name, value)
-
         return VariableString(name)
-
 
     def get_variable_value(self, name):
         return self._design.GetVariableValue(name)
+        
+    def get_variable_names(self):
+        return [VariableString(s) for s in self._design.GetVariables()]        
+        
+    def get_variables(self):
+        local_variables = self._design.GetVariables()
+        return {lv : self.get_variable_value(lv) for lv in local_variables}
+ 
+    def copy_design_variables(self, source_design):        
+        ''' does not check that variables are all present '''
+        
+        # don't care about values
+        source_variables = source_design.get_variables() 
+        
+        for name, value in source_variables.iteritems():
+            self.set_variable(name, value)
 
     def _evaluate_variable_expression(self, expr, units):
         """
@@ -402,8 +461,6 @@ class HfssDesign(object):
 
     def eval_expr(self, expr, units="mm"):
         return str(self._evaluate_variable_expression(expr, units)) + units
-
-
 
 class HfssSetup(HfssPropertyObject):
     prop_tab = "HfssTab"
@@ -425,9 +482,11 @@ class HfssSetup(HfssPropertyObject):
         self.prop_server = "AnalysisSetup:" + setup
         self.expression_cache_items = []
 
-    def analyze(self):
-        self.parent._design.Analyze(self.name)
-
+    def analyze(self, name=None):
+        if name is None:
+            name = self.name
+        self.parent._design.Analyze(name)
+        
     def insert_sweep(self, start_ghz, stop_ghz, count=None, step_ghz=None,
                      name="Sweep", type="Fast", save_fields=False):
         if (count is None) == (step_ghz is None):
@@ -455,6 +514,9 @@ class HfssSetup(HfssPropertyObject):
 
         self._setup_module.InsertFrequencySweep(self.name, params)
         return HfssFrequencySweep(self, name)
+    
+    def delete_sweep(self, name):
+        self._setup_module.DeleteSweep(self.name, name)
 
     def add_fields_convergence_expr(self, expr, pct_delta, phase=0):
         """note: because of hfss idiocy, you must call "commit_convergence_exprs" after adding all exprs"""
@@ -491,7 +553,30 @@ class HfssSetup(HfssPropertyObject):
         elif name not in sweeps:
             raise EnvironmentError("Sweep {} not found in {}".format(name, sweeps))
         return HfssFrequencySweep(self, name)
+		
+    def add_fields_convergence_expr(self, expr, pct_delta, phase=0):
+        """note: because of hfss idiocy, you must call "commit_convergence_exprs" after adding all exprs"""
+        assert isinstance(expr, NamedCalcObject)
+        self.expression_cache_items.append(
+            ["NAME:CacheItem",
+             "Title:=", expr.name+"_conv",
+             "Expression:=", expr.name,
+             "Intrinsics:=", "Phase='{}deg'".format(phase),
+             "IsConvergence:=", True,
+             "UseRelativeConvergence:=", 1,
+             "MaxConvergenceDelta:=", pct_delta,
+             "MaxConvergeValue:=", "0.05",
+             "ReportType:=", "Fields",
+             ["NAME:ExpressionContext"]])
 
+    def commit_convergence_exprs(self):
+        """note: this will eliminate any convergence expressions not added through this interface"""
+        args = [
+            "NAME:"+self.name,
+            ["NAME:ExpressionCache", self.expression_cache_items]
+        ]
+        self._setup_module.EditSetup(self.name, args)
+		
     def get_convergence(self, variation=""):
         fn = tempfile.mktemp()
         self.parent._design.ExportConvergence(self.name, variation, fn, False)
@@ -509,7 +594,6 @@ class HfssSetup(HfssPropertyObject):
 
     def get_fields(self):
         return HfssFieldsCalc(self)
-
 
 class HfssDMSetup(HfssSetup):
     solution_freq = make_float_prop("Solution Freq")
@@ -535,8 +619,8 @@ class HfssDMSetup(HfssSetup):
     def _map_variables_by_name(self):
         ''' does not check that variables are all present '''
         # don't care about values
-        project_variables = self.parent.parent.get_variables()
-        design_variables = self.parent.get_variables().keys()
+        project_variables = self.parent.parent.get_variable_names()
+        design_variables = self.parent.get_variable_names()
     
         # build array
         args = ["NAME:Params",]
@@ -586,10 +670,26 @@ class HfssDMDesignSolutions(HfssDesignSolutions):
     pass
 
 class HfssFrequencySweep(object):
+    prop_tab = "HfssTab"
+    start_freq = make_float_prop("Start")
+    stop_freq = make_float_prop("Stop")
+    step_size = make_float_prop("Step Size")
+    count = make_float_prop("Count")
+    sweep_type = make_str_prop("Type")
+    
     def __init__(self, setup, name):
         self.parent = setup
         self.name = name
-
+        self.solution_name = self.parent.name + " : " + name
+        self.prop_holder = self.parent.prop_holder
+        self.prop_server = self.parent.prop_server + ":" + name
+    
+    def analyze_sweep(self):
+        self.parent.analyze(self.solution_name)
+        
+    def save_network_data(self, formats):
+        pass
+    
     def get_network_data(self, formats):
         if isinstance(formats, str):
             formats = formats.split(",")
@@ -606,6 +706,7 @@ class HfssFrequencySweep(object):
         for data_type, list in fmts_lists.items():
             if list:
                 fn = tempfile.mktemp()
+                print self.parent, self.parent._solutions
                 self.parent._solutions.ExportNetworkData(
                     [],  self.parent.name + " : " + self.name,
                       2, fn, ["all"], False, 0,
@@ -624,7 +725,6 @@ class HfssFrequencySweep(object):
                     ret[formats.index("%s%d%d" % (data_type, i, j))] = c_arr
 
         return freq, ret
-
 
 class HfssModeler(object):
     def __init__(self, design, modeler, boundaries):
