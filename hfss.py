@@ -100,19 +100,13 @@ def make_prop(name, prop_tab=None, prop_server=None, prop_args=None):
         if isinstance(prop_server, types.FunctionType):
             prop_server = prop_server(self)
         if prop_args is None:
-            self.prop_holder.ChangeProperty(
-                ["NAME:AllTabs",
-                 ["NAME:"+prop_tab,
-                  ["NAME:PropServers", prop_server],
-                    ["NAME:ChangedProps",
-                     ["NAME:"+name, "Value:=", value]]]])
-        else:
-            self.prop_holder.ChangeProperty(
-                ["NAME:AllTabs",
-                 ["NAME:"+prop_tab,
-                  ["NAME:PropServers", prop_server],
-                  ["NAME:ChangedProps",
-                   ["NAME:"+name, "Value:=", value] + prop_args]]])
+            prop_args = []
+        self.prop_holder.ChangeProperty(
+            ["NAME:AllTabs",
+             ["NAME:"+prop_tab,
+              ["NAME:PropServers", prop_server],
+              ["NAME:ChangedProps",
+               ["NAME:"+name, "Value:=", value] + prop_args]]])
 
     def get_prop(self, prop_tab=prop_tab, prop_server=prop_server):
         prop_tab = self.prop_tab if prop_tab is None else prop_tab
