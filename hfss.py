@@ -423,6 +423,7 @@ class HfssSetup(HfssPropertyObject):
         self.name = setup
         self.solution_name = setup + " : LastAdaptive"
         self.prop_server = "AnalysisSetup:" + setup
+        self.expression_cache_items = []
 
     def analyze(self):
         self.parent._design.Analyze(self.name)
@@ -454,6 +455,29 @@ class HfssSetup(HfssPropertyObject):
 
         self._setup_module.InsertFrequencySweep(self.name, params)
         return HfssFrequencySweep(self, name)
+
+    def add_fields_convergence_expr(self, expr, pct_delta, phase=0):
+        """note: because of hfss idiocy, you must call "commit_convergence_exprs" after adding all exprs"""
+        assert isinstance(expr, NamedCalcObject)
+        self.expression_cache_items.append(
+            ["NAME:CacheItem",
+             "Title:=", expr.name+"_conv",
+             "Expression:=", expr.name,
+             "Intrinsics:=", "Phase='{}deg'".format(phase),
+             "IsConvergence:=", True,
+             "UseRelativeConvergence:=", 1,
+             "MaxConvergenceDelta:=", pct_delta,
+             "MaxConvergeValue:=", "0.05",
+             "ReportType:=", "Fields",
+             ["NAME:ExpressionContext"]])
+
+    def commit_convergence_exprs(self):
+        """note: this will eliminate any convergence expressions not added through this interface"""
+        args = [
+            "NAME:"+self.name,
+            ["NAME:ExpressionCache", self.expression_cache_items]
+        ]
+        self._setup_module.EditSetup(self.name, args)
 
     def get_sweep_names(self):
         return self._setup_module.GetSweeps(self.name)
