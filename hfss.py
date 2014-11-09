@@ -914,6 +914,8 @@ class HfssModeler(object):
         return self. _modeler.GetFaceIDs(obj)
 
     def eval_expr(self, expr, units="mm"):
+        if not isinstance(expr, str):
+            return expr
         return self.parent.eval_expr(expr, units)
 
 
@@ -1142,3 +1144,8 @@ def get_active_project():
 def get_active_design():
     project = get_active_project()
     return project.get_active_design()
+
+def get_report_arrays(name):
+    d = get_active_design()
+    r = HfssReport(d, name)
+    return r.get_arrays()
