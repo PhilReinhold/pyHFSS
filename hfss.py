@@ -6,9 +6,12 @@ import os
 import tempfile
 import types
 import numpy
+import signal
+import pythoncom
+import time
 from sympy.parsing import sympy_parser
 from pint import UnitRegistry
-from win32com.client import Dispatch
+from win32com.client import Dispatch, CDispatch
 
 ureg = UnitRegistry()
 Q = ureg.Quantity
@@ -78,7 +81,34 @@ def var(x):
         return VariableString(simplify_arith_expr(x))
     return x
 
-class HfssPropertyObject(object):
+_release_fns = []
+def _add_release_fn(fn):
+    global _release_fns
+    _release_fns.append(fn)
+    atexit.register(fn)
+    signal.signal(signal.SIGTERM, fn)
+    signal.signal(signal.SIGABRT, fn)
+
+def release():
+    global _release_fns
+    for fn in _release_fns:
+        fn()
+    time.sleep(0.1)
+    refcount = pythoncom._GetInterfaceCount()
+    if refcount > 0:
+        print "Warning! %d COM references still alive"
+        print "HFSS will likely refuse to shut down"
+
+class COMWrapper(object):
+    def __init__(self):
+        _add_release_fn(self.release)
+
+    def release(self):
+        for k, v in self.__dict__.items():
+            if isinstance(v, CDispatch):
+                setattr(self, k, None)
+
+class HfssPropertyObject(COMWrapper):
     prop_holder = None
     prop_tab = None
     prop_server = None
@@ -120,28 +150,23 @@ def make_prop(name, prop_tab=None, prop_server=None, prop_args=None):
 
     return property(get_prop, set_prop)
 
-class HfssApp(object):
+class HfssApp(COMWrapper):
     def __init__(self):
+        super(HfssApp, self).__init__()
         self._app = Dispatch('AnsoftHfss.HfssScriptInterface')
 
     def get_app_desktop(self):
         return HfssDesktop(self, self._app.GetAppDesktop())
 
-    def release(self):
-        self._app = None
-
-class HfssDesktop(object):
+class HfssDesktop(COMWrapper):
     def __init__(self, app, desktop):
         """
         :type app: HfssApp
         :type desktop: Dispatch
         """
+        super(HfssDesktop, self).__init__()
         self.parent = app
         self._desktop = desktop
-
-    def release(self):
-        self.parent.release()
-        self._desktop = None
 
     def close_all_windows(self):
         self._desktop.CloseAllWindows()
@@ -195,19 +220,16 @@ class HfssDesktop(object):
         self._desktop.SetTempDirectory(path)
 
 
-class HfssProject(object):
+class HfssProject(COMWrapper):
     def __init__(self, desktop, project):
         """
         :type desktop: HfssDesktop
         :type project: Dispatch
         """
+        super(HfssProject, self).__init__()
         self.parent = desktop
         self._project = project
         self.name = project.GetName()
-
-    def release(self):
-        self.parent.release()
-        self._project = None
 
     def close(self):
         self._project.Close()
@@ -290,8 +312,9 @@ class HfssProject(object):
         return self.new_design(name, "Eigenmode")
 
 
-class HfssDesign(object):
+class HfssDesign(COMWrapper):
     def __init__(self, project, design):
+        super(HfssDesign, self).__init__()
         self.parent = project
         self._design = design
         self.name = design.GetName()
@@ -307,19 +330,6 @@ class HfssDesign(object):
         self._modeler = design.SetActiveEditor("3D Modeler")
         self.modeler = HfssModeler(self, self._modeler, self._boundaries)
 
-        atexit.register(self.release)
-
-    def release(self):
-        self.parent.release()
-        self.modeler.release()
-        self._design = None
-        self._setup_module = None
-        self._solutions = None
-        self._fields_calc = None
-        self._output = None
-        self._boundaries = None
-        self._modeler = None
-    
     def rename_design(self, name):
         old_name = self._design.GetName()
         self._design.RenameDesignInstance(old_name, name)
@@ -472,6 +482,7 @@ class HfssSetup(HfssPropertyObject):
         :type design: HfssDesign
         :type setup: Dispatch
         """
+        super(HfssSetup, self).__init__()
         self.parent = design
         self.prop_holder = design._design
         self._setup_module = design._setup_module
@@ -641,11 +652,12 @@ class HfssEMSetup(HfssSetup):
     def get_solutions(self):
         return HfssEMDesignSolutions(self, self.parent._solutions)
 
-class HfssDesignSolutions(object):
+class HfssDesignSolutions(COMWrapper):
     def __init__(self, setup, solutions):
         '''
         :type setup: HfssSetup
         '''
+        super(HfssDesignSolutions, self).__init__()
         self.parent = setup
         self._solutions = solutions
 
@@ -669,7 +681,7 @@ class HfssEMDesignSolutions(HfssDesignSolutions):
 class HfssDMDesignSolutions(HfssDesignSolutions):
     pass
 
-class HfssFrequencySweep(object):
+class HfssFrequencySweep(COMWrapper):
     prop_tab = "HfssTab"
     start_freq = make_float_prop("Start")
     stop_freq = make_float_prop("Stop")
@@ -682,12 +694,13 @@ class HfssFrequencySweep(object):
         :type setup: HfssSetup
         :type name: str
         """
+        super(HfssFrequencySweep, self).__init__()
         self.parent = setup
         self.name = name
         self.solution_name = self.parent.name + " : " + name
         self.prop_holder = self.parent.prop_holder
         self.prop_server = self.parent.prop_server + ":" + name
-    
+
     def analyze_sweep(self):
         self.parent.analyze(self.solution_name)
         
@@ -707,7 +720,6 @@ class HfssFrequencySweep(object):
         for data_type, list in fmts_lists.items():
             if list:
                 fn = tempfile.mktemp()
-                print self.parent, self.parent._solutions
                 self.parent._solutions.ExportNetworkData(
                     [],  self.parent.name + " : " + self.name,
                       2, fn, ["all"], False, 0,
@@ -743,12 +755,13 @@ class HfssFrequencySweep(object):
         return r.get_arrays()
 
 
-class HfssReport(object):
+class HfssReport(COMWrapper):
     def __init__(self, design, name):
         """
         :type design: HfssDesign
         :type name: str
         """
+        super(HfssReport, self).__init__()
         self.parent_design = design
         self.name = name
 
@@ -762,18 +775,15 @@ class HfssReport(object):
         return numpy.loadtxt(fn, skiprows=1, delimiter=',').transpose()
 
 
-class HfssModeler(object):
+class HfssModeler(COMWrapper):
     def __init__(self, design, modeler, boundaries):
         """
         :type design: HfssDesign
         """
+        super(HfssModeler, self).__init__()
         self.parent = design
         self._modeler = modeler
         self._boundaries = boundaries
-
-    def release(self):
-        self._modeler = None
-        self._boundaries = None
 
     def set_units(self, units, rescale=True):
         self._modeler.SetModelUnits(["NAME:Units Parameter", "Units:=", units, "Rescale:=", rescale])
@@ -990,11 +1000,12 @@ class Rect(ModelEntity):
         self.modeler._make_lumped_port(start, end, ["Objects:=", [self]], z0=z0, name=name)
 
 
-class HfssFieldsCalc(object):
+class HfssFieldsCalc(COMWrapper):
     def __init__(self, setup):
         """
         :type setup: HfssSetup
         """
+        super(HfssFieldsCalc, self).__init__()
         self.parent = setup
         self.Mag_E = NamedCalcObject("Mag_E", setup)
         self.Mag_H = NamedCalcObject("Mag_H", setup)
@@ -1013,12 +1024,13 @@ class HfssFieldsCalc(object):
         self.parent.parent._fields_calc.ClearAllNamedExpr()
 
 
-class CalcObject(object):
+class CalcObject(COMWrapper):
     def __init__(self, stack, setup):
         """
         :type stack: [(str, str)]
         :type setup: HfssSetup
         """
+        super(CalcObject, self).__init__()
         self.stack = stack
         self.setup = setup
         self.calc_module = setup.parent._fields_calc
@@ -1149,3 +1161,4 @@ def get_report_arrays(name):
     d = get_active_design()
     r = HfssReport(d, name)
     return r.get_arrays()
+

@@ -67,3 +67,10 @@ Keyword Arguments for Drawing Commands
   - color: (int, int, int) each in [0...255]
   - transparency: float in [0, 1]
   - material: str (matching existing material name)
+
+HFSS refuses to close
+---------------------
+
+If your script terminates improperly, this can happen. pyHFSS tries to
+catch termination events and handle them. Your safety should be
+guaranteed however, if you call `hfss.release()` when you have finished
